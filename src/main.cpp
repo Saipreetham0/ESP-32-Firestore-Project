@@ -2,21 +2,22 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
-#include <Adafruit_GFX.h>
-// #include <Adafruit_SSD1306.h>
+// #include <Adafruit_GFX.h>
 #include <Firebase_ESP_Client.h>
 #include <addons/TokenHelper.h>
-// #include <DallasTemperature.h>
 #include <BH1750.h>
-// #include <LiquidCrystal_I2C.h>
 #include <SimpleTimer.h>
 #include "time.h"
 #include "MHZ19.h"
-#include <Adafruit_SH110X.h>
 
-// #include <AsyncTCP.h>
-// #include <ESPAsyncWebServer.h>
-// #include <WebSerial.h>
+// #include <LiquidCrystal_I2C.h>
+
+#include <ItemInput.h>
+#include <LcdMenu.h>
+#include <ItemToggle.h>
+#include <ItemProgress.h>
+#include <ItemSubMenu.h>
+#include <ItemCommand.h>
 
 // Provide the token generation process info.
 #include "addons/TokenHelper.h"
@@ -25,38 +26,31 @@
 
 SimpleTimer timer;
 
-// AsyncWebServer server(80);
+#define LCD_ROWS 4
+#define LCD_COLS 20
 
-// void recvMsg(uint8_t *data, size_t len)
-// {
-//   WebSerial.println("Received Data...");
-//   // String d = "";
-//   // for (int i = 0; i < len; i++)
-//   // {
-//   //   d += char(data[i]);
-//   // }
-//   // WebSerial.println(d);
-//   // if (d == "ON")
-//   // {
-//   //   digitalWrite(LED, HIGH);
-//   // }
-//   // if (d == "OFF")
-//   // {
-//   //   digitalWrite(LED, LOW);
-//   // }
-// }
+const int buttonUpPin = 16;   // Button for moving up in the menu
+const int buttonDownPin = 17; // Button for moving down in the menu
+const int buttonMenuPin = 18; // Button for entering the menu
+const int buttonOkPin = 15;   // Button for confirming a menu selection
+const int buttonLeftPin = 5;
+const int buttonRightPin = 4;
+
+void inputCallback(char *value);
+
+
+
 // Declare sensor variables
 Adafruit_BME280 bme;
 MHZ19 myMHZ19;
 HardwareSerial mySerial(0); // On ESP32, we use HardwareSerial
 
-// LiquidCrystal_I2C lcd(0x27, 20, 4);
-// OneWire oneWire(4); // Dallas Temperature sensor on pin 4
-// DallasTemperature sensors(&oneWire);
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+
 BH1750 lightMeter;
 
 bool taskCompleted = false;
-unsigned long timestamp;
+// unsigned long timestamp;
 FirebaseJson json;
 
 int temperature;
@@ -64,20 +58,12 @@ int humidity;
 int CO2;
 int lux;
 
-#define i2c_Address 0x3c // initialize with the I2C addr 0x3C Typically eBay OLED's
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 64 // OLED display height, in pixels
-#define OLED_RESET -1    //   QT-PY / XIAO
-
-Adafruit_SH1106G display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-
-// Adafruit_SH110X display(128, 64, &Wire); // Assuming you're using SH110X OLED
 
 // WiFi and Firebase credentials
-// #define WIFI_SSID "KSP"
-// #define WIFI_PASSWORD "9550421866"
-#define WIFI_SSID "Airtel_Joyenggservices"
-#define WIFI_PASSWORD "Joy@2022"
+#define WIFI_SSID "KSP"
+#define WIFI_PASSWORD "9550421866"
+// #define WIFI_SSID "Airtel_Joyenggservices"
+// #define WIFI_PASSWORD "Joy@2022"
 #define API_KEY "AIzaSyCiIG-sTPSX06NeqO1oKY45g6z1xxT56Lw"
 #define FIREBASE_PROJECT_ID "ksp-iot"
 #define USER_EMAIL "device@admin.com"
@@ -90,15 +76,23 @@ FirebaseAuth auth;
 FirebaseConfig configF;
 
 // Global variables
+// TEMP SET POINTS
 int tempSetPointOff;
+int tempSetPointOn;
+
+// HUM SET POINTS
 int humdSetPointOff;
 int humdSetPointOn;
-int tempSetPointOn;
+
+// DEHUM SET POINTS
 int dehumdSetPointOff;
 int dehumdSetPointOn;
 
 // Variables to save database paths
 String listenerPath = "board1/outputs/digital/";
+
+#define MAX_WIFI_RECONNECT_ATTEMPTS 5
+#define WIFI_CONNECT_TIMEOUT 30 // seconds
 
 // Declare outputs
 const int Relay1 = 14; // mm
@@ -110,10 +104,8 @@ const int Relay6 = 4;
 const int Relay7 = 23;
 const int Relay8 = 19;
 
-#define MAX_WIFI_RECONNECT_ATTEMPTS 5
-#define WIFI_CONNECT_TIMEOUT 30 // seconds
 
-// Callback function that runs on database changes
+
 void streamCallback(FirebaseStream data)
 {
   Serial.printf("stream path, %s\nevent path, %s\ndata type, %s\nevent type, %s\n\n",
@@ -127,9 +119,6 @@ void streamCallback(FirebaseStream data)
   // Get the path that triggered the function
   String streamPath = String(data.dataPath());
   Serial.print(streamPath);
-
-  // Get the path that triggered the function
-  // String streamPath = String(data.dataPath());
 
   // Handle paths for temperature and humidity set points
   if (streamPath.endsWith("/temp_set_point_off"))
@@ -158,13 +147,13 @@ void streamCallback(FirebaseStream data)
   }
   else if (streamPath.endsWith("/dehumd_set_point_off"))
   {
-    humdSetPointOff = data.intData();
+    dehumdSetPointOff = data.intData();
     Serial.print("deHumd Set Point Off: ");
     Serial.println(dehumdSetPointOff);
   }
   else if (streamPath.endsWith("/dehumd_set_point_on"))
   {
-    humdSetPointOn = data.intData();
+    dehumdSetPointOn = data.intData();
     Serial.print("deHumd Set Point On: ");
     Serial.println(dehumdSetPointOn);
   }
@@ -204,6 +193,7 @@ void streamCallback(FirebaseStream data)
     json.iteratorEnd();
   }
 
+  delay(5000); // Add delay after JSON changes block
   Serial.printf("Received stream payload size: %d (Max. %d)\n\n", data.payloadLength(), data.maxPayloadLength());
 }
 
@@ -222,55 +212,39 @@ void initWiFi()
   {
     delay(1000);
     Serial.println("Connecting to WiFi...");
-    display.clearDisplay();
-    display.setTextSize(1);
-    display.setTextColor(SH110X_WHITE);
-    display.setCursor(0, 0);
-    display.print("Connecting to WiFi...");
   }
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SH110X_WHITE);
-  display.setCursor(0, 0);
-  display.print("Connected to");
-  display.setCursor(0, 10);
-  display.print(WIFI_SSID);
-}
-
-unsigned long getTime()
-{
-  time_t now;
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo))
-  {
-    return 0;
-  }
-  time(&now);
-  return now;
 }
 
 void displaySensorValues()
 {
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SH110X_WHITE);
-  display.setCursor(0, 0);
-  display.print("Temp: " + String(temperature) + "C");
-  display.setCursor(0, 10);
-  display.print("Humidity: " + String(humidity) + "%");
-  display.setCursor(0, 20);
-  display.print("CO2: " + String(CO2));
-  display.setCursor(0, 30);
-  display.print("Lux: " + String(lux));
-  display.display();
+  // display.clearDisplay();
+  // display.setTextSize(1);
+  // display.setTextColor(SH110X_WHITE);
+  // display.setCursor(0, 0);
+  // display.print("Temp: " + String(temperature) + "C");
+  // display.setCursor(0, 10);
+  // display.print("Humidity: " + String(humidity) + "%");
+  // display.setCursor(0, 20);
+  // display.print("CO2: " + String(CO2));
+  // display.setCursor(0, 30);
+  // display.print("Lux: " + String(lux));
+  // display.display();
 }
 
 void uploadData()
 {
   taskCompleted = false;
-  Serial.println(" False");
+  // Serial.println(" False");
 }
 
+void getRealTimeSensorsData()
+{
+  delay(3000);
+  temperature = bme.readTemperature();
+  humidity = bme.readHumidity();
+  CO2 = myMHZ19.getCO2();
+  lux = lightMeter.readLightLevel();
+}
 void SensorDataUpload()
 {
   if (Firebase.ready())
@@ -283,7 +257,7 @@ void SensorDataUpload()
     humidity = bme.readHumidity();
     CO2 = myMHZ19.getCO2();
     lux = lightMeter.readLightLevel();
-    displaySensorValues();
+    // displaySensorValues();
 
     Serial.print("Humidity: ");
     Serial.print(humidity);
@@ -297,11 +271,24 @@ void SensorDataUpload()
     Serial.println(lux);
 
     FirebaseJson content;
-    timestamp = getTime();
+    // timestamp = getTime();
+
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo))
+    {
+      Serial.println("Failed to obtain time");
+      return;
+    }
+
+    // Print timestamp
+    char timestamp[20];
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d-%H-%M", &timeinfo);
+    Serial.print("Timestamp: ");
+    Serial.println(timestamp);
 
     // String formattedTimestamp = Firebase.timestamp(timestamp);
 
-    String documentPath = "devices/device1/" + String(timestamp);
+    String documentPath = "device1/" + String(timestamp);
 
     // content.set("fields/temp/doubleValue", sensors.getTempCByIndex(0));
 
@@ -357,14 +344,17 @@ void reconnectWiFi()
 
 void setup()
 {
-  Serial.begin(115200);
-  // display.begin(i2c_Address, true);
-  display.begin(i2c_Address, true); // Address 0x3C default
+  Serial.begin(9600);
 
-  display.display();
-  display.clearDisplay();
+  lcd.init(); // initialize the lcd
+  // Print a message to the LCD.
+  lcd.backlight();
+  lcd.setCursor(3, 0);
+  lcd.print("Hello, world!");
+
   initWiFi();
-  configTime(0, 0, "pool.ntp.org");
+
+  configTime(5.5 * 3600, 0, "pool.ntp.org"); // India has a UTC offset of 5 hours and 30 minutes
 
   // Initialize Outputs
   pinMode(Relay1, OUTPUT);
@@ -396,19 +386,37 @@ void setup()
   Firebase.begin(&configF, &auth);
   Firebase.reconnectWiFi(true);
 
-  // Retrieve initial values from Firebase
-  if (Firebase.RTDB.get(&fbdo, listenerPath + "temp_set_point_off"))
-    tempSetPointOff = fbdo.intData();
-  if (Firebase.RTDB.get(&fbdo, listenerPath + "humd_set_point_off"))
-    humdSetPointOff = fbdo.intData();
-  if (Firebase.RTDB.get(&fbdo, listenerPath + "humd_set_point_on"))
-    humdSetPointOn = fbdo.intData();
-  if (Firebase.RTDB.get(&fbdo, listenerPath + "temp_set_point_on"))
-    tempSetPointOn = fbdo.intData();
-  if (Firebase.RTDB.get(&fbdo, listenerPath + "humd_set_point_off"))
-    dehumdSetPointOff = fbdo.intData();
-  if (Firebase.RTDB.get(&fbdo, listenerPath + "humd_set_point_on"))
-    dehumdSetPointOn = fbdo.intData();
+  // TEMP
+  //  Retrieve initial values from Firebase
+  // if (Firebase.RTDB.get(&fbdo, listenerPath + "temp_set_point_off"))
+  //   tempSetPointOff = fbdo.intData();
+  // if (Firebase.RTDB.get(&fbdo, listenerPath + "temp_set_point_on"))
+  //   tempSetPointOn = fbdo.intData();
+
+  // // HUM
+  // if (Firebase.RTDB.get(&fbdo, listenerPath + "humd_set_point_off"))
+  //   humdSetPointOff = fbdo.intData();
+  // if (Firebase.RTDB.get(&fbdo, listenerPath + "humd_set_point_on"))
+  //   humdSetPointOn = fbdo.intData();
+
+  // // DEHUM
+  // if (Firebase.RTDB.get(&fbdo, listenerPath + "dehumd_set_point_off"))
+  //   dehumdSetPointOff = fbdo.intData();
+  // if (Firebase.RTDB.get(&fbdo, listenerPath + "dehumd_set_point_on"))
+  //   dehumdSetPointOn = fbdo.intData();
+
+  // Serial.print("Dehumd Set Point On: ");
+  // Serial.println(dehumdSetPointOn);
+  // Serial.print("Dehumd Set Point Off: ");
+  // Serial.println(dehumdSetPointOff);
+  // Serial.print("Humd Set Point On: ");
+  // Serial.println(humdSetPointOn);
+  // Serial.print("Humd Set Point Off: ");
+  // Serial.println(humdSetPointOff);
+  // Serial.print("Temp Set Point On: ");
+  // Serial.println(tempSetPointOn);
+  // Serial.print("Temp Set Point Off: ");
+  // Serial.println(tempSetPointOff);
 
   if (!Firebase.RTDB.beginStream(&stream, listenerPath.c_str()))
     Serial.printf("stream begin error, %s\n\n", stream.errorReason().c_str());
@@ -416,10 +424,11 @@ void setup()
   Firebase.RTDB.setStreamCallback(&stream, streamCallback, streamTimeoutCallback);
   delay(2000);
 
+  Wire.begin();
   mySerial.begin(9600);
   myMHZ19.begin(mySerial);
   myMHZ19.autoCalibration();
-  Wire.begin();
+
   lightMeter.begin();
 
   bool status = bme.begin(0x76);
@@ -428,12 +437,15 @@ void setup()
     Serial.println("Could not find a valid BME280 sensor, check wiring!");
   }
 
-  timer.setInterval(3000, uploadData);
-  timer.setInterval(600000, SensorDataUpload);
+  // timer.setInterval(3000, uploadData);
+  // timer.setInterval(600000, SensorDataUpload);
+  timer.setInterval(60000, SensorDataUpload);
+  // timer.setInterval(3000, getRealTimeSensorsData);
 }
 
 void loop()
 {
+
   if (WiFi.status() != WL_CONNECTED)
   {
     reconnectWiFi();
@@ -445,94 +457,90 @@ void loop()
     Firebase.refreshToken(&configF);
     Serial.println("Refresh token");
   }
-
-  // WebSerial.print("Humidity: ");
-  // WebSerial.print(humidity);
-
-  // WebSerial.println("%");
-
-  // WebSerial.print("CO2: ");
-  // WebSerial.println(CO2);
-
-  // WebSerial.print("Lux: ");
-  // WebSerial.println(lux);
-
+  getRealTimeSensorsData();
   if (!isnan(temperature))
   {
     Serial.print("Temperature: ");
     Serial.println(temperature);
     displaySensorValues();
 
-    if (temperature > tempSetPointOn) // 24
+    if (temperature >= tempSetPointOn) // 24
     {
       delay(3000);
       digitalWrite(Relay1, LOW); // Turn on relay
       Serial.println("Relay1 turned ON");
       // lcd.setCursor(0, 3);
-      // lcd.print("Relay turned ON (C)");
+      // lcd.print("Relay1 turned ON (C)");
       // Add LCD update code if needed
     }
-    else if (temperature < tempSetPointOff) // 22
+    else if (temperature <= tempSetPointOff) // 22
     {
       delay(3000);
       digitalWrite(Relay1, HIGH); // Turn off relay
       Serial.println("Relay1 turned OFF");
       // lcd.setCursor(0, 3);
-      // lcd.print("Relay turned OFF (C)");
+      // lcd.print("Relay1 turned OFF (C)");
       // Add LCD update code if needed
     }
   }
+
+  // Dehumidity  ---- heater
 
   if (!isnan(humidity))
   {
     Serial.print("humidity: ");
     Serial.println(humidity);
 
-    displaySensorValues();
+    // displaySensorValues();
 
-    if (humidity > dehumdSetPointOn) // 24
+    // Dehumidification (Relay2)
+    if (humidity >= dehumdSetPointOn) // 66 > 98
     {
-      delay(3000);
+      // delay(3000);
       digitalWrite(Relay2, LOW); // Turn on relay
+      Serial.print("dehumdidity Set Point ON: ");
+      Serial.println(dehumdSetPointOn);
       Serial.println("Relay2 turned ON");
       // lcd.setCursor(0, 3);
-      // lcd.print("Relay turned ON (H)");
+      // lcd.print("R2 turned ON (DH)");
       // Add LCD update code if needed
     }
-    else if (humidity < dehumdSetPointOff)
+    else if (humidity <= dehumdSetPointOff) // 66 < 95
     {
-      delay(3000);
+      // delay(3000);
       digitalWrite(Relay2, HIGH); // Turn off relay
+      Serial.print("dehumdidity Set Point OFF: ");
+      Serial.println(dehumdSetPointOff);
       Serial.println("Relay2 turned OFF");
       // lcd.setCursor(0, 3);
-      // lcd.print("Relay turned OFF (H)");
-      // Add LCD update code if needed
+      // lcd.print("R2 turned oFF (DH)");
     }
-  }
 
-  if (!isnan(humidity))
-  {
-    Serial.print("humidity: ");
-    Serial.println(humidity);
-
-    displaySensorValues();
-
-    if (humidity > humdSetPointOn) // 24
+    // humidity (Relay3)
+    if (humidity < humdSetPointOn) // 24
     {
+
+      // Serial.println(humidity + "<" + humdSetPointOff);
       delay(3000);
       digitalWrite(Relay3, LOW); // Turn on relay
+      Serial.print("humdidity Set Point ON: ");
+      Serial.println(humdSetPointOn);
       Serial.println("Relay3 turned ON");
       // lcd.setCursor(0, 3);
-      // lcd.print("Relay turned ON (H)");
+      // lcd.print("Relay3 turned ON (H)");
       // Add LCD update code if needed
     }
-    else if (humidity < humdSetPointOff)
+    else if (humidity > humdSetPointOff)
     {
       delay(3000);
+
+      // Serial.println(String(humidity) + ">" + humdSetPointOff);
       digitalWrite(Relay3, HIGH); // Turn off relay
+      Serial.print("humdidity Set Point OFF: ");
+      Serial.println(humdSetPointOff);
       Serial.println("Relay3 turned OFF");
       // lcd.setCursor(0, 3);
-      // lcd.print("Relay turned OFF (H)");
+      // lcd.print("Relay3 turned OFF (H)");
       // Add LCD update code if needed
     }
   }
