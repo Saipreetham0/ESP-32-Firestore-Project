@@ -2,7 +2,6 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
-// #include <Adafruit_GFX.h>
 #include <Firebase_ESP_Client.h>
 #include <addons/TokenHelper.h>
 #include <BH1750.h>
@@ -12,33 +11,150 @@
 
 // #include <LiquidCrystal_I2C.h>
 
-#include <ItemInput.h>
-#include <LcdMenu.h>
+#include <ESP32Encoder.h>
 #include <ItemToggle.h>
-#include <ItemProgress.h>
 #include <ItemSubMenu.h>
 #include <ItemCommand.h>
+#include <ItemInput.h>
+#include <LcdMenu.h>
+#include <OneButton.h>
 
 // Provide the token generation process info.
 #include "addons/TokenHelper.h"
 // Provide the RTDB payload printing info and other helper functions.
 #include "addons/RTDBHelper.h"
 
+// Global variables
+// TEMP SET POINTS
+int tempSetPointOff;
+int tempSetPointOn;
+
+// HUM SET POINTS
+int humdSetPointOff;
+int humdSetPointOn;
+
+// DEHUM SET POINTS
+int dehumdSetPointOff;
+int dehumdSetPointOn;
+
+// gobal char Converter to the text
+
+char tempOnValue[20];
+char tempOffValue[20];
+char dehumOnValue[20];
+char dehumOffValue[20];
+char humdOnValue[20];
+char humdOffValue[20];
+
 SimpleTimer timer;
 
+// LCD Menu //
 #define LCD_ROWS 4
 #define LCD_COLS 20
 
-const int buttonUpPin = 16;   // Button for moving up in the menu
-const int buttonDownPin = 17; // Button for moving down in the menu
+// Encoder Pins
+#define ROTARY_ENCODER_CLK 16 // Replace with your CLK pin 4
+#define ROTARY_ENCODER_DT 5   // Replace with your DT pin
+#define ROTARY_ENCODER_SW 17  // Replace with your SW (button) pin 19
+
+// PUSH BUTTONS DEFINE
+
 const int buttonMenuPin = 18; // Button for entering the menu
 const int buttonOkPin = 15;   // Button for confirming a menu selection
-const int buttonLeftPin = 5;
-const int buttonRightPin = 4;
 
+// ENCODER DEFINE
+ESP32Encoder encoder;
+
+// ONEBUTTON AND ENCODER DEFINE
+OneButton button(ROTARY_ENCODER_SW, true);
+
+// DOUBLE CLICK AND SINGLE CLICK
+unsigned long lastButtonClickTime = 0;
+const unsigned long doubleClickTimeThreshold = 500; // milliseconds
+
+// SET POINTS VALUE
+#define CHARSET_SIZE 10
+// Create your charset
+char charset[] = {
+    '0',
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
+    '7',
+    '8',
+    '9',
+};
+
+LcdMenu menu(LCD_ROWS, LCD_COLS);
 void inputCallback(char *value);
+void toggleBacklight(uint16_t isOn);
+uint8_t charsetPosition;
+void hideMenu();
 
+volatile bool dataChanged = false;
 
+volatile bool sensorsData = true;
+
+void handleButtonClick()
+{
+  // menu.enter(); // Perform "Enter" action on button push
+  unsigned long currentTime = millis();
+  if (currentTime - lastButtonClickTime <= doubleClickTimeThreshold)
+  {
+    // Perform "Double-Click" action
+    menu.back(); // Go back in the menu
+    delay(200);
+  }
+  else
+  {
+    // Perform "Single-Click" action//
+
+    menu.type(charset[charsetPosition]);
+
+    menu.enter(); // Enter the selected menu item
+    delay(200);
+  }
+
+  lastButtonClickTime = currentTime;
+}
+
+void inputTempSetPointONCallback(char *value);
+void inputTempSetPointOFFCallback(char *value);
+
+void inputDehubSetPointONCallback(char *value);
+void inputDehubSetPointOFFCallback(char *value);
+
+void inputHumSetPointONCallback(char *value);
+void inputHumSetPointOFFCallback(char *value);
+
+extern MenuItem *tempMenu[];
+extern MenuItem *dehumMenu[];
+extern MenuItem *humMenu[];
+
+MAIN_MENU(
+    // ITEM_INPUT("Temp SP_ON", inputTempSetPointONCallback),
+    ITEM_SUBMENU("Temperature", tempMenu),
+    ITEM_SUBMENU("Dehumidity", dehumMenu),
+    ITEM_SUBMENU("Humidity", humMenu),
+    ITEM_COMMAND("Hide Menu", hideMenu),
+    ITEM_TOGGLE("Backlight", toggleBacklight),
+    ITEM_BASIC("Connect to WiFi"));
+
+SUB_MENU(tempMenu, mainMenu,
+         ITEM_INPUT("Temp SP_ON", inputTempSetPointONCallback),
+         ITEM_INPUT("Temp SP_OFF", inputTempSetPointOFFCallback));
+
+SUB_MENU(dehumMenu, mainMenu,
+         ITEM_INPUT("Dehum SP_ON", inputDehubSetPointONCallback),
+         ITEM_INPUT("Dehum SP_OFF", inputDehubSetPointOFFCallback));
+
+SUB_MENU(humMenu, mainMenu,
+         ITEM_INPUT("Humi SP_ON", inputHumSetPointONCallback),
+         ITEM_INPUT("Humi SP_OFF", inputHumSetPointOFFCallback));
+// LCD MENU
 
 // Declare sensor variables
 Adafruit_BME280 bme;
@@ -58,7 +174,6 @@ int humidity;
 int CO2;
 int lux;
 
-
 // WiFi and Firebase credentials
 #define WIFI_SSID "KSP"
 #define WIFI_PASSWORD "9550421866"
@@ -75,22 +190,12 @@ FirebaseData stream;
 FirebaseAuth auth;
 FirebaseConfig configF;
 
-// Global variables
-// TEMP SET POINTS
-int tempSetPointOff;
-int tempSetPointOn;
-
-// HUM SET POINTS
-int humdSetPointOff;
-int humdSetPointOn;
-
-// DEHUM SET POINTS
-int dehumdSetPointOff;
-int dehumdSetPointOn;
-
 // Variables to save database paths
 String listenerPath = "board1/outputs/digital/";
 
+String parentPath;
+
+// WIFI Reconnect Method
 #define MAX_WIFI_RECONNECT_ATTEMPTS 5
 #define WIFI_CONNECT_TIMEOUT 30 // seconds
 
@@ -103,8 +208,6 @@ const int Relay5 = 13;
 const int Relay6 = 4;
 const int Relay7 = 23;
 const int Relay8 = 19;
-
-
 
 void streamCallback(FirebaseStream data)
 {
@@ -195,6 +298,8 @@ void streamCallback(FirebaseStream data)
 
   delay(5000); // Add delay after JSON changes block
   Serial.printf("Received stream payload size: %d (Max. %d)\n\n", data.payloadLength(), data.maxPayloadLength());
+
+  dataChanged = true;
 }
 
 void streamTimeoutCallback(bool timeout)
@@ -211,24 +316,47 @@ void initWiFi()
   while (WiFi.status() != WL_CONNECTED)
   {
     delay(1000);
+
     Serial.println("Connecting to WiFi...");
+    menu.lcd->clear();
+    menu.lcd->setCursor(0, 0);
+    menu.lcd->print("Connecting to WiFi...");
   }
+  Serial.print("Connected to");
+  Serial.println(WIFI_SSID);
+  menu.lcd->clear();
+  menu.lcd->setCursor(0, 0);
+  menu.lcd->print("Connected to  ");
+  menu.lcd->println(WIFI_SSID);
+
+  delay(2000);
 }
 
 void displaySensorValues()
 {
-  // display.clearDisplay();
-  // display.setTextSize(1);
-  // display.setTextColor(SH110X_WHITE);
-  // display.setCursor(0, 0);
-  // display.print("Temp: " + String(temperature) + "C");
-  // display.setCursor(0, 10);
-  // display.print("Humidity: " + String(humidity) + "%");
-  // display.setCursor(0, 20);
-  // display.print("CO2: " + String(CO2));
-  // display.setCursor(0, 30);
-  // display.print("Lux: " + String(lux));
-  // display.display();
+
+  menu.lcd->clear();
+  menu.lcd->setCursor(0, 0);
+  menu.lcd->print("Temperature: ");
+  menu.lcd->print(temperature);
+  menu.lcd->print(" C");
+
+  menu.lcd->setCursor(0, 1);
+  menu.lcd->print("Humidity: ");
+  menu.lcd->print(humidity);
+  menu.lcd->print(" %");
+
+  menu.lcd->setCursor(0, 2);
+  menu.lcd->print("CO2: ");
+  menu.lcd->print(CO2);
+  menu.lcd->print(" ppm");
+
+  menu.lcd->setCursor(0, 3);
+  menu.lcd->print("Lux: ");
+  menu.lcd->print(lux);
+  menu.lcd->print(" lux");
+
+  delay(3000);
 }
 
 void uploadData()
@@ -237,6 +365,7 @@ void uploadData()
   // Serial.println(" False");
 }
 
+// String parentPath;
 void getRealTimeSensorsData()
 {
   delay(3000);
@@ -288,7 +417,7 @@ void SensorDataUpload()
 
     // String formattedTimestamp = Firebase.timestamp(timestamp);
 
-    String documentPath = "device1/" + String(timestamp);
+    String documentPath = "device10/" + String(timestamp);
 
     // content.set("fields/temp/doubleValue", sensors.getTempCByIndex(0));
 
@@ -342,17 +471,154 @@ void reconnectWiFi()
   }
 }
 
+// void taskMenu(void *pvParameters)
+// {
+//   Serial.print("Task1 running on core ");
+//   Serial.println(xPortGetCoreID());
+//   for (;;)
+//   {
+//     if (sensorsData)
+//     {
+//       displaySensorValues();
+//     }
+//     vTaskDelay(10 / portTICK_PERIOD_MS);
+//   }
+// }
+
+void taskEncoder(void *pvParameters)
+{
+
+  Serial.print("Task2 running on core ");
+  Serial.println(xPortGetCoreID());
+  for (;;)
+  {
+    int encoderValue = encoder.getCount();
+    if (encoderValue > 0)
+    {
+      if (menu.isInEditMode())
+      {
+        charsetPosition = (charsetPosition + 1) % CHARSET_SIZE;
+        menu.drawChar(charset[charsetPosition]);
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+      }
+      menu.down();
+    }
+    else if (encoderValue < 0)
+    {
+      if (menu.isInEditMode())
+      {
+        charsetPosition = constrain(charsetPosition - 1, 0, CHARSET_SIZE);
+        menu.drawChar(charset[charsetPosition]);
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+      }
+      menu.up();
+    }
+    encoder.clearCount();
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+}
+
+void taskButton(void *pvParameters)
+{
+  for (;;)
+  {
+    button.tick();
+
+    if (digitalRead(buttonMenuPin) == LOW)
+    {
+      Serial.println("Button Menu back Pressed");
+      menu.back();
+    }
+    else if (digitalRead(buttonOkPin) == LOW)
+    {
+      Serial.println("Button OK Pressed");
+
+      if (menu.isInEditMode())
+      {
+        menu.backspace();
+        Serial.println("BackSpace");
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+      }
+
+      menu.show();
+      sensorsData = false;
+    }
+
+    vTaskDelay(10 / portTICK_PERIOD_MS); // Reduce the delay
+  }
+}
+
+void getSetPointsData()
+{
+
+  // TEMP
+  // Retrieve initial values from Firebase
+  if (Firebase.RTDB.get(&fbdo, listenerPath + "temp_set_point_off"))
+    tempSetPointOff = fbdo.intData();
+  if (Firebase.RTDB.get(&fbdo, listenerPath + "temp_set_point_on"))
+    tempSetPointOn = fbdo.intData();
+
+  // HUM
+  if (Firebase.RTDB.get(&fbdo, listenerPath + "humd_set_point_off"))
+    humdSetPointOff = fbdo.intData();
+  if (Firebase.RTDB.get(&fbdo, listenerPath + "humd_set_point_on"))
+    humdSetPointOn = fbdo.intData();
+
+  // DEHUM
+  if (Firebase.RTDB.get(&fbdo, listenerPath + "dehumd_set_point_off"))
+    dehumdSetPointOff = fbdo.intData();
+  if (Firebase.RTDB.get(&fbdo, listenerPath + "dehumd_set_point_on"))
+    dehumdSetPointOn = fbdo.intData();
+
+  Serial.print("Dehumd Set Point On: ");
+  Serial.println(dehumdSetPointOn);
+  Serial.print("Dehumd Set Point Off: ");
+  Serial.println(dehumdSetPointOff);
+  Serial.print("Humd Set Point On: ");
+  Serial.println(humdSetPointOn);
+  Serial.print("Humd Set Point Off: ");
+  Serial.println(humdSetPointOff);
+  Serial.print("Temp Set Point On: ");
+  Serial.println(tempSetPointOn);
+  Serial.print("Temp Set Point Off: ");
+  Serial.println(tempSetPointOff);
+}
+
+void lcdSetPointDataPrint()
+{
+  // Set numeric values for temperature menu
+  sprintf(tempOnValue, "%d", tempSetPointOn);
+  sprintf(tempOffValue, "%d", tempSetPointOff);
+  tempMenu[1]->setValue(tempOnValue);
+  tempMenu[2]->setValue(tempOffValue);
+
+  // Set numeric values for dehumidifier menu
+  sprintf(dehumOnValue, "%d", dehumdSetPointOn);
+  sprintf(dehumOffValue, "%d", dehumdSetPointOff);
+  dehumMenu[1]->setValue(dehumOnValue);
+  dehumMenu[2]->setValue(dehumOffValue);
+
+  // Set numeric values for humidity menu
+  sprintf(humdOnValue, "%d", humdSetPointOn);
+  sprintf(humdOffValue, "%d", humdSetPointOff);
+  humMenu[1]->setValue(humdOnValue);
+  humMenu[2]->setValue(humdOffValue);
+
+  menu.update();
+}
+
 void setup()
 {
   Serial.begin(9600);
 
-  lcd.init(); // initialize the lcd
-  // Print a message to the LCD.
-  lcd.backlight();
-  lcd.setCursor(3, 0);
-  lcd.print("Hello, world!");
-
+  // LCD Menu
+  menu.setupLcdWithMenu(0x27, mainMenu);
+  menu.lcd->clear();
+  menu.lcd->setCursor(0, 0);
+  menu.lcd->print("Getting Started");
   initWiFi();
+
+  menu.hide();
 
   configTime(5.5 * 3600, 0, "pool.ntp.org"); // India has a UTC offset of 5 hours and 30 minutes
 
@@ -386,44 +652,27 @@ void setup()
   Firebase.begin(&configF, &auth);
   Firebase.reconnectWiFi(true);
 
-  // TEMP
-  //  Retrieve initial values from Firebase
-  // if (Firebase.RTDB.get(&fbdo, listenerPath + "temp_set_point_off"))
-  //   tempSetPointOff = fbdo.intData();
-  // if (Firebase.RTDB.get(&fbdo, listenerPath + "temp_set_point_on"))
-  //   tempSetPointOn = fbdo.intData();
+  // ONE BUTTON
+  button.attachClick(handleButtonClick);
 
-  // // HUM
-  // if (Firebase.RTDB.get(&fbdo, listenerPath + "humd_set_point_off"))
-  //   humdSetPointOff = fbdo.intData();
-  // if (Firebase.RTDB.get(&fbdo, listenerPath + "humd_set_point_on"))
-  //   humdSetPointOn = fbdo.intData();
+  // Attach the encoder
+  encoder.attachHalfQuad(ROTARY_ENCODER_CLK, ROTARY_ENCODER_DT);
 
-  // // DEHUM
-  // if (Firebase.RTDB.get(&fbdo, listenerPath + "dehumd_set_point_off"))
-  //   dehumdSetPointOff = fbdo.intData();
-  // if (Firebase.RTDB.get(&fbdo, listenerPath + "dehumd_set_point_on"))
-  //   dehumdSetPointOn = fbdo.intData();
+  pinMode(buttonMenuPin, INPUT_PULLUP);
+  pinMode(buttonOkPin, INPUT_PULLUP);
 
-  // Serial.print("Dehumd Set Point On: ");
-  // Serial.println(dehumdSetPointOn);
-  // Serial.print("Dehumd Set Point Off: ");
-  // Serial.println(dehumdSetPointOff);
-  // Serial.print("Humd Set Point On: ");
-  // Serial.println(humdSetPointOn);
-  // Serial.print("Humd Set Point Off: ");
-  // Serial.println(humdSetPointOff);
-  // Serial.print("Temp Set Point On: ");
-  // Serial.println(tempSetPointOn);
-  // Serial.print("Temp Set Point Off: ");
-  // Serial.println(tempSetPointOff);
+  charsetPosition = 0;
 
+  // Firebase DataChanger Method
   if (!Firebase.RTDB.beginStream(&stream, listenerPath.c_str()))
     Serial.printf("stream begin error, %s\n\n", stream.errorReason().c_str());
 
   Firebase.RTDB.setStreamCallback(&stream, streamCallback, streamTimeoutCallback);
-  delay(2000);
 
+  // delay(2000);
+  getSetPointsData();
+  lcdSetPointDataPrint();
+  // Sensors Getting Started
   Wire.begin();
   mySerial.begin(9600);
   myMHZ19.begin(mySerial);
@@ -437,32 +686,93 @@ void setup()
     Serial.println("Could not find a valid BME280 sensor, check wiring!");
   }
 
+  if (sensorsData)
+  {
+
+    displaySensorValues();
+  }
+
   // timer.setInterval(3000, uploadData);
   // timer.setInterval(600000, SensorDataUpload);
   timer.setInterval(60000, SensorDataUpload);
   // timer.setInterval(3000, getRealTimeSensorsData);
+
+  // xTaskCreatePinnedToCore(
+  //     taskMenu,   /* Task function. */
+  //     "TaskMenu", /* name of task. */
+  //     10000,      /* Stack size of task */
+  //     NULL,       /* parameter of the task */
+  //     1,          /* priority of the task */
+  //     NULL,       /* Task handle to keep track of created task */
+  //     0);         /* pin task to core 0 */
+
+  xTaskCreatePinnedToCore(
+      taskEncoder,   /* Task function. */
+      "TaskEncoder", /* name of task. */
+      10000,         /* Stack size of task */
+      NULL,          /* parameter of the task */
+      1,             /* priority of the task */
+      NULL,          /* Task handle to keep track of created task */
+      0);            /* pin task to core 0 */
+
+  xTaskCreatePinnedToCore(
+      taskButton,   /* Task function. */
+      "TaskButton", /* name of task. */
+      10000,        /* Stack size of task */
+      NULL,         /* parameter of the task */
+      1,            /* priority of the task */
+      NULL,         /* Task handle to keep track of created task */
+      0);           /* pin task to core 0 */
 }
 
 void loop()
 {
 
+  // Wifi Reconnecting Methos
   if (WiFi.status() != WL_CONNECTED)
   {
     reconnectWiFi();
   }
+  // Timer Run For Sensors Data Uploading
   timer.run();
 
+  Serial.print("loop() running on core ");
+  Serial.println(xPortGetCoreID());
+
+  // int tempSetPointOn =50;
+
+  // LCD Menu For Encoder
+  // menuEncoderKsp();
+
+  // Getting Firebase Token (Upload data/Get Data)
   if (Firebase.isTokenExpired())
   {
     Firebase.refreshToken(&configF);
     Serial.println("Refresh token");
   }
+
+  if (dataChanged)
+  {
+    dataChanged = false;
+    // When stream data is available, do anything here...
+    getSetPointsData();
+    lcdSetPointDataPrint();
+  }
+
+  if (sensorsData)
+  {
+    displaySensorValues();
+  }
+
+  // Get Sensors realtime Data
   getRealTimeSensorsData();
+
+  // SET POINTS OF TEMPERATURE
   if (!isnan(temperature))
   {
     Serial.print("Temperature: ");
     Serial.println(temperature);
-    displaySensorValues();
+    // displaySensorValues();
 
     if (temperature >= tempSetPointOn) // 24
     {
@@ -484,8 +794,8 @@ void loop()
     }
   }
 
-  // Dehumidity  ---- heater
-
+  //  Dehumidity  ---- heater
+  // SET POINTS OF TEMPERATURE
   if (!isnan(humidity))
   {
     Serial.print("humidity: ");
@@ -544,4 +854,124 @@ void loop()
       // Add LCD update code if needed
     }
   }
+
+  button.tick();
+}
+
+// LCD Menu
+
+void inputCallback(char *value)
+{
+  // Serial.print(F("# "));
+  Serial.println(value);
+}
+
+void updateSetPoint(const char *setPointType, const char *setPointName, char *value)
+{
+  // Check if the value is not null and not zero
+  if (value != nullptr && atof(value) != 0)
+  {
+    if (Firebase.ready())
+    {
+      FirebaseJson json;
+      parentPath = setPointType;
+      json.set(setPointName, atof(value));
+
+      // Uncomment the following line if you want to print the JSON data
+      // Serial.printf("JSON Data: %s\n", json.toStdString().c_str());
+
+      Serial.printf("Update node... %s\n", Firebase.RTDB.updateNode(&fbdo, listenerPath.c_str(), &json) ? "ok" : fbdo.errorReason().c_str());
+      menu.lcd->clear();
+      menu.lcd->setCursor(0, 0);
+      menu.lcd->println("Saved Value");
+
+      delay(5000);
+      menu.show();
+    }
+    else
+    {
+      Serial.println("Firebase not ready. Node not updated.");
+      menu.lcd->clear();
+
+      menu.lcd->setCursor(0, 0);
+      menu.lcd->println("Firebase not");
+      menu.lcd->setCursor(0, 1);
+      menu.lcd->println("ready. Node");
+      menu.lcd->setCursor(0, 2);
+      menu.lcd->println("not updated.");
+
+      delay(5000);
+      // menu.lcd->setCursor(0, 0);
+      // menu.lcd->println("");
+      menu.show();
+    }
+  }
+  else
+  {
+    Serial.println("Value is null or zero. Node not updated.");
+    menu.lcd->clear();
+    menu.lcd->setCursor(0, 0);
+    menu.lcd->println("Value is null or ");
+    menu.lcd->setCursor(0, 1);
+    menu.lcd->println("zero. Node not ");
+    menu.lcd->setCursor(0, 2);
+    menu.lcd->println("updated. ");
+
+    delay(5000);
+    // menu.lcd->setCursor(3, 0);
+    // menu.lcd->println("");
+    menu.show();
+  }
+
+  lcdSetPointDataPrint();
+}
+
+void inputTempSetPointONCallback(char *value)
+{
+  updateSetPoint("temp_set_point_on", "temp_set_point_on", value);
+}
+
+void inputTempSetPointOFFCallback(char *value)
+{
+  updateSetPoint("temp_set_point_off", "temp_set_point_off", value);
+}
+
+void inputDehubSetPointONCallback(char *value)
+{
+  updateSetPoint("dehumd_set_point_on", "dehumd_set_point_on", value);
+}
+
+void inputDehubSetPointOFFCallback(char *value)
+{
+  updateSetPoint("dehumd_set_point_off", "dehumd_set_point_off", value);
+}
+
+void inputHumSetPointONCallback(char *value)
+{
+  updateSetPoint("humd_set_point_on", "humd_set_point_on", value);
+}
+
+void inputHumSetPointOFFCallback(char *value)
+{
+  // Check if the value is non-zero and not null
+
+  updateSetPoint("humd_set_point_off", "humd_set_point_off", value);
+}
+
+// BackLight ON/OFF
+void toggleBacklight(uint16_t isOn)
+{
+  menu.setBacklight(isOn);
+}
+
+// Menu HideMenu
+
+void hideMenu()
+{
+  // Perform actions to hide the menu
+
+  Serial.println("Menu Hide");
+  menu.hide(); // Clear the LCD screen or perform other actions as needed
+  // delay(100);
+  sensorsData = true;
 }
