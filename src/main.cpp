@@ -18,6 +18,7 @@
 #include <ItemInput.h>
 #include <LcdMenu.h>
 #include <OneButton.h>
+#include <WiFiManager.h> //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 
 // Provide the token generation process info.
 #include "addons/TokenHelper.h"
@@ -619,6 +620,9 @@ void setup()
   initWiFi();
 
   menu.hide();
+  menu.lcd->clear();
+  menu.lcd->setCursor(0, 0);
+  menu.lcd->print("initializing \n Sensors");
 
   configTime(5.5 * 3600, 0, "pool.ntp.org"); // India has a UTC offset of 5 hours and 30 minutes
 
