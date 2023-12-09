@@ -176,14 +176,14 @@ int CO2;
 int lux;
 
 // WiFi and Firebase credentials
-#define WIFI_SSID "KSP"
-#define WIFI_PASSWORD "9550421866"
+// #define WIFI_SSID "KSP"
+// #define WIFI_PASSWORD "9550421866"
 // #define WIFI_SSID "Airtel_Joyenggservices"
 // #define WIFI_PASSWORD "Joy@2022"
 #define API_KEY "AIzaSyCiIG-sTPSX06NeqO1oKY45g6z1xxT56Lw"
 #define FIREBASE_PROJECT_ID "ksp-iot"
-#define USER_EMAIL "device@admin.com"
-#define USER_PASSWORD "123456789"
+#define USER_EMAIL "device1@stabaka.com"
+#define USER_PASSWORD "MzfCtLPz!nJm7fPY"
 #define DATABASE_URL "ksp-iot-default-rtdb.asia-southeast1.firebasedatabase.app"
 
 FirebaseData fbdo;
@@ -311,27 +311,27 @@ void streamTimeoutCallback(bool timeout)
     Serial.printf("error code: %d, reason: %s\n\n", stream.httpCode(), stream.errorReason().c_str());
 }
 
-void initWiFi()
-{
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(1000);
+// void initWiFi()
+// {
+//   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+//   while (WiFi.status() != WL_CONNECTED)
+//   {
+//     delay(1000);
 
-    Serial.println("Connecting to WiFi...");
-    menu.lcd->clear();
-    menu.lcd->setCursor(0, 0);
-    menu.lcd->print("Connecting to WiFi...");
-  }
-  Serial.print("Connected to");
-  Serial.println(WIFI_SSID);
-  menu.lcd->clear();
-  menu.lcd->setCursor(0, 0);
-  menu.lcd->print("Connected to  ");
-  menu.lcd->println(WIFI_SSID);
+//     Serial.println("Connecting to WiFi...");
+//     menu.lcd->clear();
+//     menu.lcd->setCursor(0, 0);
+//     menu.lcd->print("Connecting to WiFi...");
+//   }
+//   Serial.print("Connected to");
+//   Serial.println(WIFI_SSID);
+//   menu.lcd->clear();
+//   menu.lcd->setCursor(0, 0);
+//   menu.lcd->print("Connected to  ");
+//   menu.lcd->println(WIFI_SSID);
 
-  delay(2000);
-}
+//   delay(2000);
+// }
 
 void displaySensorValues()
 {
@@ -418,7 +418,7 @@ void SensorDataUpload()
 
     // String formattedTimestamp = Firebase.timestamp(timestamp);
 
-    String documentPath = "device10/" + String(timestamp);
+    String documentPath = "device1/" + String(timestamp);
 
     // content.set("fields/temp/doubleValue", sensors.getTempCByIndex(0));
 
@@ -436,41 +436,41 @@ void SensorDataUpload()
   }
 }
 
-void reconnectWiFi()
-{
-  Serial.print("Attempting to reconnect to WiFi");
-  int attempts = 0;
+// void reconnectWiFi()
+// {
+//   Serial.print("Attempting to reconnect to WiFi");
+//   int attempts = 0;
 
-  while (WiFi.status() != WL_CONNECTED && attempts < MAX_WIFI_RECONNECT_ATTEMPTS)
-  {
-    Serial.print(".");
+//   while (WiFi.status() != WL_CONNECTED && attempts < MAX_WIFI_RECONNECT_ATTEMPTS)
+//   {
+//     Serial.print(".");
 
-    // Attempt to reconnect to WiFi
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+//     // Attempt to reconnect to WiFi
+//     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-    // Wait for the connection to be established
-    int attemptTimeout = 0;
-    while (WiFi.status() != WL_CONNECTED && attemptTimeout < WIFI_CONNECT_TIMEOUT)
-    {
-      delay(1000);
-      Serial.print(".");
-      attemptTimeout++;
-    }
+//     // Wait for the connection to be established
+//     int attemptTimeout = 0;
+//     while (WiFi.status() != WL_CONNECTED && attemptTimeout < WIFI_CONNECT_TIMEOUT)
+//     {
+//       delay(1000);
+//       Serial.print(".");
+//       attemptTimeout++;
+//     }
 
-    attempts++;
-    delay(1000);
-  }
+//     attempts++;
+//     delay(1000);
+//   }
 
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    Serial.println("\nReconnected to WiFi. IP address: " + WiFi.localIP().toString());
-  }
-  else
-  {
-    Serial.println("\nFailed to reconnect to WiFi. Restarting the board...");
-    ESP.restart(); // Reset the board
-  }
-}
+//   if (WiFi.status() == WL_CONNECTED)
+//   {
+// Serial.println("\nReconnected to WiFi. IP address: " + WiFi.localIP().toString());
+//   }
+//   else
+//   {
+//     Serial.println("\nFailed to reconnect to WiFi. Restarting the board...");
+//     ESP.restart(); // Reset the board
+//   }
+// }
 
 // void taskMenu(void *pvParameters)
 // {
@@ -617,12 +617,42 @@ void setup()
   menu.lcd->clear();
   menu.lcd->setCursor(0, 0);
   menu.lcd->print("Getting Started");
-  initWiFi();
+  // initWiFi();
+  WiFiManager wm;
+
+  bool res;
+  // res = wm.autoConnect(); // auto generated AP name from chipid
+  // res = wm.autoConnect("AutoConnectAP"); // anonymous ap
+  res = wm.autoConnect("stabaka", "123456789"); // password protected ap
+
+  if (!res)
+  {
+    menu.lcd->clear();
+    menu.lcd->setCursor(0, 0);
+    menu.lcd->print("Please Connect ");
+    menu.lcd->setCursor(0, 1);
+    menu.lcd->print("Stabaka Wifi");
+    menu.lcd->setCursor(0, 2);
+    menu.lcd->print("IP: 192.168.4.1");
+
+    Serial.println("Failed to connect");
+
+    Serial.println("\nReconnected to WiFi. IP address: " + WiFi.localIP().toString());
+
+    // ESP.restart();
+  }
+  else
+  {
+    // if you get here you have connected to the WiFi
+    Serial.println("connected...yeey :)");
+  }
 
   menu.hide();
   menu.lcd->clear();
   menu.lcd->setCursor(0, 0);
-  menu.lcd->print("initializing \n Sensors");
+  menu.lcd->print("initializing");
+  menu.lcd->setCursor(0, 1);
+  menu.lcd->print("Sensors");
 
   configTime(5.5 * 3600, 0, "pool.ntp.org"); // India has a UTC offset of 5 hours and 30 minutes
 
@@ -696,9 +726,10 @@ void setup()
     displaySensorValues();
   }
 
+  SensorDataUpload();
   // timer.setInterval(3000, uploadData);
-  // timer.setInterval(600000, SensorDataUpload);
-  timer.setInterval(60000, SensorDataUpload);
+  timer.setInterval(1800000, SensorDataUpload);
+  // timer.setInterval(60000, SensorDataUpload);
   // timer.setInterval(3000, getRealTimeSensorsData);
 
   // xTaskCreatePinnedToCore(
@@ -735,7 +766,7 @@ void loop()
   // Wifi Reconnecting Methos
   if (WiFi.status() != WL_CONNECTED)
   {
-    reconnectWiFi();
+    // reconnectWiFi();
   }
   // Timer Run For Sensors Data Uploading
   timer.run();
